@@ -445,14 +445,39 @@ class PixioApiKey:
         return (key,)
 
 
+def _render_text_card(lines, width=512):
+    """Render text lines to an IMAGE tensor so plain ComfyUI can display them."""
+    from PIL import ImageDraw, ImageFont
+    try:
+        font_big = ImageFont.load_default(size=34)
+        font_small = ImageFont.load_default(size=22)
+    except TypeError:  # Pillow < 10.1 has no size argument
+        font_big = font_small = ImageFont.load_default()
+    pad, gap = 24, 12
+    heights = [(font_big if i == 0 else font_small).getbbox(line)[3] + gap
+               for i, line in enumerate(lines)]
+    img = Image.new("RGB", (width, pad * 2 + sum(heights)), (24, 26, 32))
+    draw = ImageDraw.Draw(img)
+    y = pad
+    for i, line in enumerate(lines):
+        font = font_big if i == 0 else font_small
+        draw.text((pad, y), line, fill=(240, 240, 245) if i == 0 else (170, 200, 255),
+                  font=font)
+        y += heights[i]
+    arr = np.asarray(img).astype(np.float32) / 255.0
+    return torch.from_numpy(arr).unsqueeze(0)
+
+
 class PixioCredits:
     """Check remaining Pixio credits."""
 
     CATEGORY = "Pixio"
     FUNCTION = "check"
-    RETURN_TYPES = ("STRING", "INT")
-    RETURN_NAMES = ("summary", "total_credits")
+    RETURN_TYPES = ("STRING", "INT", "IMAGE")
+    RETURN_NAMES = ("summary", "total_credits", "image")
     OUTPUT_NODE = True
+    DESCRIPTION = ("Fetches your Pixio credit balance. Connect the image output to a "
+                   "Preview Image node to see it on the canvas.")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -474,7 +499,12 @@ class PixioCredits:
                    f"(recurring {recurring.get('current', '?')}/{recurring.get('quota', '?')}, "
                    f"permanent {credits.get('permanent', '?')})")
         print(f"[Pixio] {summary}")
-        return (summary, total)
+        card = _render_text_card([
+            f"Pixio credits: {total:,}",
+            f"recurring: {recurring.get('current', '?')} / {recurring.get('quota', '?')}",
+            f"permanent: {credits.get('permanent', '?')}",
+        ])
+        return (summary, total, card)
 
 
 class PixioUploadMedia:

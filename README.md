@@ -12,7 +12,7 @@ and 3D generation.
 | --- | --- |
 | **Pixio Generation 🎛️ (any model)** | Run any Pixio model. Dynamic widgets per model, auto-upload of connected images/audio, polling, and download of results. |
 | **Pixio API Key** | Holds your key so one node can feed many. |
-| **Pixio Credits** | Check your remaining credit balance. |
+| **Pixio Credits** | Check your remaining credit balance — connect its `image` output to a core *Preview Image* node to see the balance on the canvas. |
 | **Pixio Upload Media** | Upload an IMAGE/AUDIO/local file to Pixio and get a URL. |
 
 ## Installation
