@@ -10,7 +10,8 @@ and 3D generation.
 
 | Node | What it does |
 | --- | --- |
-| **Pixio Generation 🎛️ (any model)** | Run any Pixio model. Dynamic widgets per model, auto-upload of connected images/audio, polling, and download of results. |
+| **Pixio Text → Image / Image → Video / Lipsync / … (17 domain nodes)** | One node per model type. The dropdown lists only that type's models, and the parameters most models of the type share are real native widgets (dropdowns, toggles, sliders) — no JavaScript required. Parameters the selected model doesn't support are dropped automatically; model-specific extras go in `model_params` JSON. |
+| **Pixio Generation 🎛️ (any model)** | The universal node: run any of the 550+ models. Dynamic widgets per model (via web extension), auto-upload of connected images/audio, polling, and download of results. |
 | **Pixio API Key** | Holds your key so one node can feed many. |
 | **Pixio Credits** | Check your remaining credit balance — connect its `image` output to a core *Preview Image* node to see the balance on the canvas. |
 | **Pixio Upload Media** | Upload an IMAGE/AUDIO/local file to Pixio and get a URL. |

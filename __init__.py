@@ -1,6 +1,6 @@
-"""Pixio Integration for ComfyUI — use any of the 550+ Pixio models from one node."""
+﻿"""Pixio Integration for ComfyUI — use any of the 550+ Pixio models from one node."""
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 from .nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS, get_model_ids
 
@@ -62,3 +62,4 @@ try:
 
 except Exception as e:  # running outside ComfyUI (tests, linting)
     print(f"[Pixio] server route not registered: {e}")
+
