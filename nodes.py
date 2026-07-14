@@ -171,6 +171,33 @@ def _bytes_to_audio(data, ext):
         return None
 
 
+def _video_from_file(path):
+    """Wrap a saved video in ComfyUI's native VIDEO type (None if unsupported)."""
+    try:
+        from comfy_api.input_impl import VideoFromFile
+    except ImportError:
+        try:
+            from comfy_api.input_impl.video_types import VideoFromFile
+        except ImportError:
+            print("[Pixio] this ComfyUI version has no native VIDEO type — "
+                  "use the file_path/media_url outputs instead")
+            return None
+    return VideoFromFile(path)
+
+
+def _first_video_frame(path):
+    """Decode the first frame of a video as an IMAGE tensor thumbnail."""
+    try:
+        import av
+        with av.open(path) as container:
+            for frame in container.decode(video=0):
+                arr = np.asarray(frame.to_image().convert("RGB")).astype(np.float32) / 255.0
+                return torch.from_numpy(arr).unsqueeze(0)
+    except Exception as e:
+        print(f"[Pixio] could not extract video thumbnail: {e}")
+    return None
+
+
 def _file_kind(inp):
     text = f"{inp.get('name', '')} {inp.get('label', '')}".lower()
     if any(h in text for h in AUDIO_HINTS):
@@ -275,8 +302,10 @@ class PixioGeneration:
 
     CATEGORY = "Pixio"
     FUNCTION = "generate"
-    RETURN_TYPES = ("IMAGE", "AUDIO", "STRING", "STRING")
-    RETURN_NAMES = ("image", "audio", "media_url", "file_path")
+    # VIDEO is appended last so workflows saved before it existed keep their
+    # slot indices for audio/media_url/file_path connections.
+    RETURN_TYPES = ("IMAGE", "AUDIO", "STRING", "STRING", "VIDEO")
+    RETURN_NAMES = ("image", "audio", "media_url", "file_path", "video")
     OUTPUT_NODE = True
     DESCRIPTION = ("Run any Pixio model. Click 'Load Pixio models' to turn the model field into "
                    "a searchable dropdown; the model's own parameters appear as widgets below.")
@@ -375,6 +404,8 @@ def _execute_generation(client, model_def, model, params, timeout_minutes):
     out_dir = _output_dir()
     image_out = _blank_image()
     audio_out = _silent_audio()
+    video_out = None
+    ui = {}
     ui_images = []
     saved_paths = []
     primary_url = urls[0]
@@ -400,15 +431,30 @@ def _execute_generation(client, model_def, model, params, timeout_minutes):
     elif media_type == "audio":
         data = client.download(primary_url)
         ext = _ext_for(primary_url, "audio")
-        fpath = os.path.join(out_dir, f"pixio_{content_id[:8]}{ext}")
+        fname = f"pixio_{content_id[:8]}{ext}"
+        fpath = os.path.join(out_dir, fname)
         with open(fpath, "wb") as f:
             f.write(data)
         saved_paths.append(fpath)
         decoded = _bytes_to_audio(data, ext)
         if decoded:
             audio_out = decoded
+        ui["audio"] = [{"filename": fname, "subfolder": "pixio", "type": "output"}]
+    elif media_type == "video":
+        data = client.download(primary_url)
+        fname = f"pixio_{content_id[:8]}{_ext_for(primary_url, 'video')}"
+        fpath = os.path.join(out_dir, fname)
+        with open(fpath, "wb") as f:
+            f.write(data)
+        saved_paths.append(fpath)
+        video_out = _video_from_file(fpath)
+        thumb = _first_video_frame(fpath)
+        if thumb is not None:
+            image_out = thumb
+        ui["images"] = [{"filename": fname, "subfolder": "pixio", "type": "output"}]
+        ui["animated"] = (True,)
     else:
-        # video, 3d models, svg, anything else — save the file and hand back the path/URL
+        # 3d models, svg, anything else — save the file and hand back the path/URL
         data = client.download(primary_url)
         fpath = os.path.join(out_dir, f"pixio_{content_id[:8]}{_ext_for(primary_url, media_type)}")
         with open(fpath, "wb") as f:
@@ -421,9 +467,11 @@ def _execute_generation(client, model_def, model, params, timeout_minutes):
           + (f" — cost {cost} credits" if cost is not None else "")
           + (f" — saved to {file_path}" if file_path else ""))
 
-    result = {"result": (image_out, audio_out, primary_url, file_path)}
+    result = {"result": (image_out, audio_out, primary_url, file_path, video_out)}
     if ui_images:
-        result["ui"] = {"images": ui_images}
+        ui["images"] = ui_images
+    if ui:
+        result["ui"] = ui
     return result
 
 

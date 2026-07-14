@@ -20,7 +20,8 @@
         { "name": "image", "type": "IMAGE", "links": [1], "slot_index": 0 },
         { "name": "audio", "type": "AUDIO", "links": null },
         { "name": "media_url", "type": "STRING", "links": null },
-        { "name": "file_path", "type": "STRING", "links": null }
+        { "name": "file_path", "type": "STRING", "links": null },
+        { "name": "video", "type": "VIDEO", "links": null }
       ],
       "properties": { "Node name for S&R": "PixioGeneration" },
       "widgets_values": [

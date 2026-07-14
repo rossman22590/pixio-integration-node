@@ -54,12 +54,13 @@ Get a key (`pxio_live_...`) from [Pixio](https://beta.pixio.myapps.ai). Provide 
 
 ### Outputs
 
-- **image** (IMAGE) — decoded image result(s), previewed on the node.
-- **audio** (AUDIO) — decoded audio result.
+- **image** (IMAGE) — decoded image result(s), previewed on the node. For video results this carries the first frame as a thumbnail.
+- **video** (VIDEO) — native ComfyUI video; connect it to the core **Save Video** node. Video results also play directly on the node.
+- **audio** (AUDIO) — decoded audio result; connect to **Save Audio** / **Preview Audio**. An audio player also appears on the node.
 - **media_url** (STRING) — the output URL (valid ~7 days).
-- **file_path** (STRING) — every result is also saved to `ComfyUI/output/pixio/`. For video/3D outputs, use this path (e.g. with Video Helper Suite's *Load Video (Path)*).
+- **file_path** (STRING) — every result is also saved to `ComfyUI/output/pixio/` (useful for 3D outputs or Video Helper Suite's *Load Video (Path)*).
 
-For non-image models the `image` output is a 64×64 black placeholder (and vice versa for `audio`) so type validation stays happy — use the outputs that match the model's modality.
+Outputs that don't match the model's modality are placeholders (64×64 black image, silent audio, `None` video) so type validation stays happy — use the ones that match.
 
 ## Example: text → image → video chain
 
