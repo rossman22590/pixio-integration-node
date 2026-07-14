@@ -146,17 +146,13 @@ function setupNode(node) {
     if (node.__pixioSetup) return;
     node.__pixioSetup = true;
 
+    // appended after the static widgets so their indices in widgets_values stay
+    // identical whether or not this extension is loaded (workflow portability)
     const btn = node.addWidget("button", "🔄 Refresh Pixio models", null, () =>
         refreshModels(node, false));
     btn.name = "__pixio_load";
     btn.serialize = false;
     if (btn.options) btn.options.serialize = false;
-
-    // place the button right below the model widget
-    const bi = node.widgets.indexOf(btn);
-    node.widgets.splice(bi, 1);
-    const mi = node.widgets.findIndex((w) => w.name === "model");
-    node.widgets.splice(mi + 1, 0, btn);
 
     const mw = getWidget(node, "model");
     if (mw) {
