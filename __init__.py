@@ -1,10 +1,15 @@
 """Pixio Integration for ComfyUI — use any of the 550+ Pixio models from one node."""
 
-from .nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
+__version__ = "1.1.0"
+
+from .nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS, get_model_ids
 
 WEB_DIRECTORY = "./web"
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
+
+print(f"[Pixio] Pixio Integration v{__version__} loaded — "
+      f"{len(get_model_ids())} models in the dropdown catalog")
 
 
 # ---------------------------------------------------------------------------
