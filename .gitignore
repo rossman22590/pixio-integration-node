@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+pixio_config.json
+outputs/

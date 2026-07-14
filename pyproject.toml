@@ -1,0 +1,14 @@
+[project]
+name = "pixio-integration-node"
+description = "Use any of the 550+ Pixio models (image, video, audio, 3D) from a single dynamic ComfyUI node."
+version = "1.0.0"
+license = { text = "MIT" }
+dependencies = ["requests>=2.28.0", "pillow", "numpy"]
+
+[project.urls]
+Repository = "https://github.com/rossman22590/pixio-integration-node"
+
+[tool.comfy]
+PublisherId = "rossman22590"
+DisplayName = "Pixio Integration"
+Icon = ""
