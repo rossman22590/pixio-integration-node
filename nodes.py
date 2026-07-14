@@ -9,6 +9,7 @@ model's file parameters.
 import io
 import json
 import os
+import threading
 from urllib.parse import urlparse
 
 import numpy as np
@@ -24,6 +25,80 @@ except ImportError:
 
 AUDIO_HINTS = ("audio", "voice", "music", "sound", "speech", "song", "vocal")
 VIDEO_HINTS = ("video", "clip", "movie", "footage")
+
+
+# --------------------------------------------------------------------------
+# model catalog — powers the native model dropdown
+#
+# Priority: in-memory (live-fetched) > models_cache_local.json (written after
+# every successful live fetch, gitignored) > models_cache.json (snapshot
+# bundled with the repo). A background refresh runs at import time when an
+# API key is resolvable from the env var or pixio_config.json.
+# --------------------------------------------------------------------------
+
+_NODE_DIR = os.path.dirname(__file__)
+_BUNDLED_CATALOG = os.path.join(_NODE_DIR, "models_cache.json")
+_LOCAL_CATALOG = os.path.join(_NODE_DIR, "models_cache_local.json")
+_CATALOG_KEYS = ("id", "providerId", "name", "type", "credits", "company", "inputs")
+
+_catalog_lock = threading.Lock()
+_catalog = None
+
+
+def _read_catalog_file(path):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            models = json.load(f).get("models") or []
+        return models or None
+    except (OSError, ValueError):
+        return None
+
+
+def get_catalog():
+    global _catalog
+    with _catalog_lock:
+        if not _catalog:
+            _catalog = _read_catalog_file(_LOCAL_CATALOG) or \
+                _read_catalog_file(_BUNDLED_CATALOG) or []
+        return _catalog
+
+
+def set_catalog(models):
+    global _catalog
+    if not models:
+        return
+    slim = [{k: m.get(k) for k in _CATALOG_KEYS if m.get(k) is not None} for m in models]
+    slim.sort(key=lambda m: m.get("id") or "")
+    with _catalog_lock:
+        _catalog = slim
+    try:
+        with open(_LOCAL_CATALOG, "w", encoding="utf-8") as f:
+            json.dump({"models": slim}, f, ensure_ascii=False, separators=(",", ":"))
+    except OSError:
+        pass
+
+
+def get_model_ids():
+    ids = [m["id"] for m in get_catalog() if m.get("id")]
+    return ids or ["pixio/flux-1/schnell"]
+
+
+def _refresh_catalog_async():
+    key = resolve_api_key("")
+    if not key:
+        return
+
+    def run():
+        try:
+            set_catalog(PixioClient(key).list_models())
+            print(f"[Pixio] model catalog refreshed ({len(get_catalog())} models)")
+        except Exception as e:
+            print(f"[Pixio] catalog refresh failed (using cached list): {e}")
+
+    threading.Thread(target=run, daemon=True, name="pixio-catalog").start()
+
+
+_refresh_catalog_async()
 
 
 # --------------------------------------------------------------------------
@@ -214,16 +289,17 @@ class PixioGeneration:
                     "default": os.environ.get("PIXIO_API_KEY", ""),
                     "tooltip": "Pixio API key (pxio_live_...). Leave empty to use the "
                                "PIXIO_API_KEY env var or pixio_config.json."}),
-                "model": ("STRING", {
+                "model": (get_model_ids(), {
                     "default": "pixio/flux-1/schnell",
-                    "tooltip": "Pixio model id. Click 'Load Pixio models' to get a dropdown."}),
+                    "tooltip": "Pixio model to run. The list refreshes from your account "
+                               "when an API key is available."}),
                 "prompt": ("STRING", {"default": "", "multiline": True,
                                       "tooltip": "Used as the model's 'prompt' parameter."}),
                 "model_params": ("STRING", {
                     "default": "{}", "multiline": True,
                     "tooltip": "JSON parameters for the selected model. Auto-filled by the "
                                "dynamic widgets — edit by hand only if you know the schema."}),
-                "seed": ("INT", {"default": 0, "min": 0, "max": 0x7FFFFFFF,
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xFFFFFFFFFFFFFFFF,
                                  "control_after_generate": True,
                                  "tooltip": "Sent to the model only if it has a 'seed' parameter; "
                                             "otherwise just forces a re-run when changed."}),
@@ -239,6 +315,12 @@ class PixioGeneration:
                                                     "overrides the api_key widget."}),
             },
         }
+
+    @classmethod
+    def VALIDATE_INPUTS(cls, **kwargs):
+        # The live catalog can be newer than the bundled snapshot the dropdown
+        # was built from — accept any model id and let the API be the judge.
+        return True
 
     def generate(self, api_key, model, prompt, model_params, seed, timeout_minutes,
                  image_1=None, image_2=None, audio=None, pixio_key=None):

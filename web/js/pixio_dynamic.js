@@ -1,12 +1,14 @@
-// Pixio Integration — dynamic model picker + per-model widgets for PixioGeneration.
+// Pixio Integration — dynamic per-model widgets for PixioGeneration.
 //
 // Flow:
-//   1. "Load Pixio models" fetches the catalog through /pixio/models (key stays server-side).
-//   2. The `model` text widget is upgraded to a searchable combo of all model ids.
+//   1. The `model` dropdown itself comes from Python (bundled catalog snapshot).
+//   2. On node creation the catalog is fetched through /pixio/models (key stays
+//      server-side; falls back to the bundled snapshot when no key is set) and
+//      the dropdown options are refreshed with the live list.
 //   3. Selecting a model rebuilds the node's widgets from that model's input schema.
-//   4. Every dynamic widget syncs its value into the hidden-in-plain-sight `model_params`
-//      JSON widget, which is what the Python node actually reads — so workflows stay
-//      portable and everything still works even if this extension fails to load.
+//   4. Every dynamic widget syncs its value into the `model_params` JSON widget,
+//      which is what the Python node actually reads — so workflows stay portable
+//      and everything still works even if this extension fails to load.
 
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
@@ -124,16 +126,14 @@ async function refreshModels(node, silent) {
         const models = await fetchModels(getWidget(node, "api_key")?.value);
         node.__pixioModels = models;
         const mw = getWidget(node, "model");
-        if (mw) {
-            mw.type = "combo";
-            mw.options = Object.assign({}, mw.options, {
-                values: models.map((m) => m.id),
-            });
+        if (mw?.options) {
+            // widget is already a combo (defined in Python) — swap in the live list
+            mw.options.values = models.map((m) => m.id);
         }
         if (btn) btn.label = `🔄 Reload models (${models.length})`;
         applyModel(node, mw?.value, readParams(node));
     } catch (e) {
-        if (btn) btn.label = "🔄 Load Pixio models";
+        if (btn) btn.label = "🔄 Refresh Pixio models";
         console.warn("[Pixio] failed to load model catalog:", e);
         if (!silent) alert("Pixio: could not load models — " + e.message);
     } finally {
@@ -146,7 +146,7 @@ function setupNode(node) {
     if (node.__pixioSetup) return;
     node.__pixioSetup = true;
 
-    const btn = node.addWidget("button", "🔄 Load Pixio models", null, () =>
+    const btn = node.addWidget("button", "🔄 Refresh Pixio models", null, () =>
         refreshModels(node, false));
     btn.name = "__pixio_load";
     btn.serialize = false;

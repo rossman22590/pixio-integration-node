@@ -1,4 +1,5 @@
 __pycache__/
 *.pyc
 pixio_config.json
+models_cache_local.json
 outputs/

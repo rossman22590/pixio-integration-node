@@ -19,6 +19,7 @@ try:
     from aiohttp import web
     from server import PromptServer
 
+    from .nodes import get_catalog, set_catalog
     from .pixio_api import PixioClient, resolve_api_key
 
     _CATALOG_CACHE = {}
@@ -32,10 +33,8 @@ try:
             data = {}
         key = resolve_api_key(data.get("api_key", ""))
         if not key:
-            return web.json_response(
-                {"error": "No Pixio API key. Fill in the api_key widget (or set the "
-                          "PIXIO_API_KEY env var / pixio_config.json) and try again."},
-                status=400)
+            # No key yet — serve the cached/bundled catalog so the UI still works.
+            return web.json_response({"models": get_catalog(), "cached": True})
 
         cache_key = hashlib.sha256(key.encode()).hexdigest()
         cached = _CATALOG_CACHE.get(cache_key)
@@ -46,9 +45,14 @@ try:
         try:
             models = await loop.run_in_executor(None, lambda: PixioClient(key).list_models())
         except Exception as e:
+            fallback = get_catalog()
+            if fallback:
+                print(f"[Pixio] live catalog fetch failed, serving cached list: {e}")
+                return web.json_response({"models": fallback, "cached": True})
             return web.json_response({"error": str(e)}, status=502)
 
         _CATALOG_CACHE[cache_key] = (time.time(), models)
+        set_catalog(models)  # keep the dropdown list and local cache fresh
         return web.json_response({"models": models})
 
 except Exception as e:  # running outside ComfyUI (tests, linting)

@@ -39,8 +39,8 @@ Get a key (`pxio_live_...`) from [Pixio](https://beta.pixio.myapps.ai). Provide 
 
 1. Add **Pixio → Pixio Generation 🎛️ (any model)**.
 2. Enter your API key (or rely on the env var / config file).
-3. Click **🔄 Load Pixio models** — the `model` field becomes a searchable dropdown of every model your account can see, and the node title shows the credit cost.
-4. Pick a model. Its parameters (aspect ratio, duration, voice, strength, …) appear as widgets. `select` params become dropdowns, `boolean` params become toggles, and `file` params become URL fields.
+3. Pick a model from the `model` dropdown (a catalog snapshot ships with the node, so the list works immediately; **🔄 Refresh Pixio models** pulls the current list your account can see). The node title shows the credit cost.
+4. The model's parameters (aspect ratio, duration, voice, strength, …) appear as widgets. `select` params become dropdowns, `boolean` params become toggles, and `file` params become URL fields.
 5. Write your prompt, queue, done.
 
 ### Inputs
