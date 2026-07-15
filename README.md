@@ -10,8 +10,8 @@ and 3D generation.
 
 | Node | What it does |
 | --- | --- |
-| **Pixio Text → Image / Image → Video / Lipsync / … (17 domain nodes)** | One node per model type. The dropdown lists only that type's models, and the parameters most models of the type share are real native widgets (dropdowns, toggles, sliders) — no JavaScript required. Parameters the selected model doesn't support are dropped automatically; model-specific extras go in `model_params` JSON. |
-| **Pixio Generation 🎛️ (any model)** | The universal node: run any of the 550+ models. Dynamic widgets per model (via web extension), auto-upload of connected images/audio, polling, and download of results. |
+| **Pixio Text → Image / Image → Video / Lipsync / … (17 domain nodes)** | One node per model type. The dropdown lists only that type's models, and the parameters most models of the type share are real native widgets (dropdowns, toggles, sliders) — no JavaScript required. On top of that, the bundled web extension adds the selected model's *remaining* parameters as dynamic widgets, so every model's full parameter set is on the node. |
+| **Pixio Generation 🎛️ (any model)** | The universal node: run any of the 550+ models. Pick a model and the node's widgets rebuild to that model's exact input schema. Auto-upload of connected images/audio, polling, and download of results. |
 | **Pixio API Key** | Holds your key so one node can feed many. |
 | **Pixio Credits** | Check your remaining credit balance — connect its `image` output to a core *Preview Image* node to see the balance on the canvas. |
 | **Pixio Upload Media** | Upload an IMAGE/AUDIO/local file to Pixio and get a URL. |
@@ -67,6 +67,20 @@ Outputs that don't match the model's modality are placeholders (64×64 black ima
 `Pixio Generation` (model `pixio/flux-1/schnell`, prompt) → `image` output into a second
 `Pixio Generation` node's `image_1` (model set to any image-to-video model, e.g. Kling) →
 take `file_path` / `media_url` from the second node.
+
+## How the dynamic widgets work
+
+Selecting a model (on any Pixio generation node) rebuilds the node's widgets
+from that model's input schema: `select` → dropdown, `boolean` → toggle,
+`number` → number widget, `file` → URL field. Values sync into the
+`model_params` JSON widget, which is the only thing the Python node reads — so
+saved workflows, the API path, and frontends without the extension all behave
+identically. Rebuilds trigger on dropdown clicks, on workflow load, and when a
+host app sets the model programmatically.
+
+When ComfyUI runs embedded in the Pixio workspace, every Pixio node also gets a
+**🎛 Configure in Pixio panel** button that opens the workspace's model browser
+targeted at that node.
 
 ## Notes
 

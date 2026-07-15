@@ -1,6 +1,6 @@
 ﻿"""Pixio Integration for ComfyUI — use any of the 550+ Pixio models from one node."""
 
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 
 from .nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS, get_model_ids
 
