@@ -14,6 +14,24 @@ import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
 const NODE_NAME = "PixioGeneration";
+// Pixio nodes without a model dropdown — no dynamic behavior needed.
+const NON_GENERATION_NODES = new Set([
+    "PixioApiKey", "PixioCredits", "PixioUploadMedia",
+]);
+
+function isPixioGenerationNode(name) {
+    return typeof name === "string" && name.startsWith("Pixio") &&
+        !NON_GENERATION_NODES.has(name);
+}
+
+// True when ComfyUI runs embedded in the Pixio workspace (iframe).
+function isEmbedded() {
+    try {
+        return window.parent && window.parent !== window;
+    } catch (e) {
+        return false;
+    }
+}
 
 function getWidget(node, name) {
     return node.widgets?.find((w) => w.name === name);
@@ -154,6 +172,22 @@ function setupNode(node) {
     btn.serialize = false;
     if (btn.options) btn.options.serialize = false;
 
+    // Inside the Pixio workspace iframe: button that opens the Pixio Models
+    // panel in the host app, targeting this node (same postMessage bridge the
+    // assets browser uses).
+    if (isEmbedded()) {
+        const panelBtn = node.addWidget("button", "🎛 Configure in Pixio panel",
+            null, () => {
+                window.parent.postMessage(JSON.stringify({
+                    type: "pixio",
+                    data: { node: node.id },
+                }), "*");
+            });
+        panelBtn.name = "__pixio_panel";
+        panelBtn.serialize = false;
+        if (panelBtn.options) panelBtn.options.serialize = false;
+    }
+
     const mw = getWidget(node, "model");
     if (mw) {
         const original = mw.callback;
@@ -167,16 +201,38 @@ function setupNode(node) {
     setTimeout(() => refreshModels(node, true), 300);
 }
 
+// Domain nodes (PixioTextToImage, PixioImageToVideo, …) keep their native
+// Python widgets — they only get the panel button when embedded.
+function setupDomainNode(node) {
+    if (node.__pixioSetup) return;
+    node.__pixioSetup = true;
+    if (!isEmbedded()) return;
+    const panelBtn = node.addWidget("button", "🎛 Configure in Pixio panel",
+        null, () => {
+            window.parent.postMessage(JSON.stringify({
+                type: "pixio",
+                data: { node: node.id },
+            }), "*");
+        });
+    panelBtn.name = "__pixio_panel";
+    panelBtn.serialize = false;
+    if (panelBtn.options) panelBtn.options.serialize = false;
+}
+
 app.registerExtension({
     name: "pixio.dynamic",
     async beforeRegisterNodeDef(nodeType, nodeData) {
-        if (nodeData.name !== NODE_NAME) return;
+        if (!isPixioGenerationNode(nodeData.name)) return;
+        const isUniversal = nodeData.name === NODE_NAME;
 
         const onNodeCreated = nodeType.prototype.onNodeCreated;
         nodeType.prototype.onNodeCreated = function () {
             onNodeCreated?.apply(this, arguments);
-            setupNode(this);
+            if (isUniversal) setupNode(this);
+            else setupDomainNode(this);
         };
+
+        if (!isUniversal) return;
 
         const onConfigure = nodeType.prototype.onConfigure;
         nodeType.prototype.onConfigure = function () {
