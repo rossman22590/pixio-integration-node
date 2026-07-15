@@ -10,8 +10,7 @@ and 3D generation.
 
 | Node | What it does |
 | --- | --- |
-| **Pixio Text → Image / Image → Video / Lipsync / … (17 domain nodes)** | One node per model type. The dropdown lists only that type's models, and the parameters most models of the type share are real native widgets (dropdowns, toggles, sliders) — no JavaScript required. On top of that, the bundled web extension adds the selected model's *remaining* parameters as dynamic widgets, so every model's full parameter set is on the node. |
-| **Pixio Generation 🎛️ (any model)** | The universal node: run any of the 550+ models. Pick a model and the node's widgets rebuild to that model's exact input schema. Auto-upload of connected images/audio, polling, and download of results. |
+| **Pixio Generation 🎛️ (any model)** | The universal supernode: run any of the 550+ models. Pick a model and the node transforms — its widgets rebuild to that model's exact parameter schema, and its media input sockets change to what the model takes (an image-to-video model shows an IMAGE socket, a lipsync model shows IMAGE + AUDIO, text-to-image shows none). Auto-upload of connected images/videos/audio, polling, and download of results. |
 | **Pixio API Key** | Holds your key so one node can feed many. |
 | **Pixio Credits** | Check your remaining credit balance — connect its `image` output to a core *Preview Image* node to see the balance on the canvas. |
 | **Pixio Upload Media** | Upload an IMAGE/AUDIO/local file to Pixio and get a URL. |
@@ -47,8 +46,10 @@ Get a key (`pxio_live_...`) from [Pixio](https://beta.pixio.myapps.ai). Provide 
 ### Inputs
 
 - **prompt** — sent as the model's `prompt` parameter.
-- **image_1 / image_2** — connected images are uploaded to Pixio automatically and mapped, in order, onto the model's image-file parameters (e.g. face swap's target + swap image). A URL typed into a file widget takes priority over the connected input.
+- **image_1 … image_4** — connected images are uploaded to Pixio automatically and mapped, in order, onto the model's image-file parameters (e.g. face swap's target + swap image). A URL set in `model_params` takes priority over the connected input.
+- **video_1 / video_2** — same, for the model's video parameters (connect another Pixio node's `video` output to chain video → video models).
 - **audio** — same, for the model's audio parameter.
+- With the web extension loaded, only the sockets the selected model uses are shown, labeled with the model's own parameter names. Without it, the full socket pool is visible and unused sockets are simply ignored.
 - **model_params** — the JSON the dynamic widgets write into; the Python node reads this. You can edit it by hand (or use the node entirely without the web extension this way).
 - **seed** — passed to the model only if it has a `seed` parameter; otherwise it just forces a re-run when changed.
 
@@ -68,15 +69,21 @@ Outputs that don't match the model's modality are placeholders (64×64 black ima
 `Pixio Generation` node's `image_1` (model set to any image-to-video model, e.g. Kling) →
 take `file_path` / `media_url` from the second node.
 
-## How the dynamic widgets work
+## How the dynamic node works
 
-Selecting a model (on any Pixio generation node) rebuilds the node's widgets
-from that model's input schema: `select` → dropdown, `boolean` → toggle,
-`number` → number widget, `file` → URL field. Values sync into the
-`model_params` JSON widget, which is the only thing the Python node reads — so
-saved workflows, the API path, and frontends without the extension all behave
-identically. Rebuilds trigger on dropdown clicks, on workflow load, and when a
-host app sets the model programmatically.
+Selecting a model transforms the node from that model's input schema:
+
+- **Widgets** — `select` → dropdown, `boolean` → toggle, `number` → number
+  widget. Values sync into the `model_params` JSON widget, which is the only
+  thing the Python node reads — so saved workflows, the API path, and
+  frontends without the extension all behave identically.
+- **Sockets** — `file` params become typed media sockets (IMAGE / VIDEO /
+  AUDIO) shown only when the model needs them, labeled with the param's real
+  name. Connected media is uploaded and mapped onto the params in schema
+  order.
+
+Rebuilds trigger on dropdown clicks, on workflow load, and when a host app
+sets the model programmatically.
 
 When ComfyUI runs embedded in the Pixio workspace, every Pixio node also gets a
 **🎛 Configure in Pixio panel** button that opens the workspace's model browser

@@ -1,9 +1,10 @@
 """ComfyUI nodes for the Pixio API (https://beta.pixio.myapps.ai).
 
-PixioGeneration is a universal generation node: pick any model from the Pixio
-catalog and its inputs appear as widgets (via the bundled web extension).
-Connected IMAGE/AUDIO inputs are uploaded automatically and mapped onto the
-model's file parameters.
+PixioGeneration is a universal supernode: pick any model from the Pixio
+catalog and both its widgets and its media input sockets transform to match
+that model's input schema (via the bundled web extension). Connected
+IMAGE/VIDEO/AUDIO inputs are uploaded automatically and mapped onto the
+model's file parameters in schema order.
 """
 
 import io
@@ -236,7 +237,29 @@ def _coerce(value, inp):
     return value
 
 
-def _prepare_params(client, model_def, prompt, raw_params, images, audio, seed):
+def _video_to_mp4_bytes(video):
+    """Extract raw bytes from a ComfyUI VIDEO input (or a plain file path)."""
+    if isinstance(video, str) and os.path.isfile(video):
+        with open(video, "rb") as f:
+            return f.read()
+    if hasattr(video, "save_to"):  # comfy_api VideoInput / VideoFromFile
+        import tempfile
+        path = os.path.join(tempfile.gettempdir(),
+                            f"pixio_upload_{os.getpid()}_{id(video)}.mp4")
+        try:
+            video.save_to(path)
+            with open(path, "rb") as f:
+                return f.read()
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+    raise PixioError("Unsupported VIDEO input object — pass a URL for the video "
+                     "parameter in model_params instead.")
+
+
+def _prepare_params(client, model_def, prompt, raw_params, images, videos, audio, seed):
     inputs = model_def.get("inputs") or []
     schema = {i.get("name"): i for i in inputs}
     params = dict(raw_params)
@@ -250,6 +273,7 @@ def _prepare_params(client, model_def, prompt, raw_params, images, audio, seed):
 
     # Map connected media / local paths onto the model's file inputs.
     image_queue = [img for img in images if img is not None]
+    video_queue = [vid for vid in videos if vid is not None]
     audio_available = audio is not None
     for inp in inputs:
         if inp.get("type") != "file":
@@ -271,6 +295,10 @@ def _prepare_params(client, model_def, prompt, raw_params, images, audio, seed):
             params[name] = client.upload_bytes(_audio_to_wav_bytes(audio), "input.wav", "audio/wav")
             audio_available = False
             print(f"[Pixio] uploaded connected audio for '{name}'")
+        elif kind == "video" and video_queue:
+            vid = video_queue.pop(0)
+            params[name] = client.upload_bytes(_video_to_mp4_bytes(vid), "input.mp4", "video/mp4")
+            print(f"[Pixio] uploaded connected video for '{name}'")
         elif kind == "image" and image_queue:
             img = image_queue.pop(0)
             params[name] = client.upload_bytes(_image_to_png_bytes(img), "input.png", "image/png")
@@ -335,9 +363,18 @@ class PixioGeneration:
                 "timeout_minutes": ("INT", {"default": 15, "min": 1, "max": 120}),
             },
             "optional": {
+                # Socket pool: the web extension shows only the sockets the
+                # selected model actually uses (relabeled to its real param
+                # names). Python maps connected media onto the model's file
+                # params in schema order.
                 "image_1": ("IMAGE", {"tooltip": "Uploaded to Pixio and mapped to the model's "
                                                  "first image input."}),
                 "image_2": ("IMAGE", {"tooltip": "Mapped to the model's second image input."}),
+                "image_3": ("IMAGE", {"tooltip": "Mapped to the model's third image input."}),
+                "image_4": ("IMAGE", {"tooltip": "Mapped to the model's fourth image input."}),
+                "video_1": ("VIDEO", {"tooltip": "Uploaded and mapped to the model's first "
+                                                 "video input."}),
+                "video_2": ("VIDEO", {"tooltip": "Mapped to the model's second video input."}),
                 "audio": ("AUDIO", {"tooltip": "Uploaded and mapped to the model's audio input."}),
                 "pixio_key": ("STRING", {"forceInput": True,
                                          "tooltip": "Optional key from a PixioApiKey node; "
@@ -352,7 +389,8 @@ class PixioGeneration:
         return True
 
     def generate(self, api_key, model, prompt, model_params, seed, timeout_minutes,
-                 image_1=None, image_2=None, audio=None, pixio_key=None):
+                 image_1=None, image_2=None, image_3=None, image_4=None,
+                 video_1=None, video_2=None, audio=None, pixio_key=None):
         client = PixioClient((pixio_key or "").strip() or api_key)
 
         try:
@@ -369,7 +407,8 @@ class PixioGeneration:
             raise PixioError(f"model_params is not valid JSON: {e}")
 
         params = _prepare_params(client, model_def, prompt, raw_params,
-                                 [image_1, image_2], audio, seed)
+                                 [image_1, image_2, image_3, image_4],
+                                 [video_1, video_2], audio, seed)
         return _execute_generation(client, model_def, model, params, timeout_minutes)
 
 
@@ -596,204 +635,6 @@ class PixioUploadMedia:
         return (url,)
 
 
-# --------------------------------------------------------------------------
-# domain nodes — one node per model type, pure Python, no frontend JS
-#
-# Each node's dropdown lists only that type's models, and the parameters that
-# most models of the type share become real native widgets (computed from the
-# catalog). At runtime only parameters the selected model actually supports
-# are sent; model_params JSON overrides everything for the exotic ones.
-# --------------------------------------------------------------------------
-
-_RESERVED_PARAM_NAMES = {"api_key", "model", "prompt", "model_params", "seed",
-                         "timeout_minutes", "video_url", "image_1", "image_2",
-                         "audio", "pixio_key"}
-_DOMAIN_MIN_FREQ = 0.25   # param must appear in >= 25% of the type's models
-_DOMAIN_MAX_WIDGETS = 10
-
-
-def _models_of_type(model_type):
-    return [m for m in get_catalog() if m.get("type") == model_type]
-
-
-def _domain_widget_spec(model_type):
-    """Native widget definitions for the params common across a model type."""
-    models = _models_of_type(model_type)
-    if not models:
-        return {}
-    occurrences = {}
-    order = []
-    for m in models:
-        for inp in m.get("inputs") or []:
-            name = inp.get("name")
-            if not name or name in _RESERVED_PARAM_NAMES or inp.get("type") == "file":
-                continue
-            if name not in occurrences:
-                order.append(name)
-            occurrences.setdefault(name, []).append(inp)
-
-    common = [n for n in order if len(occurrences[n]) / len(models) >= _DOMAIN_MIN_FREQ]
-    common.sort(key=lambda n: -len(occurrences[n]))
-
-    widgets = {}
-    for name in common[:_DOMAIN_MAX_WIDGETS]:
-        infos = occurrences[name]
-        kinds = [i.get("type") for i in infos]
-        kind = max(set(kinds), key=kinds.count)
-        defaults = [i.get("defaultValue") for i in infos
-                    if i.get("defaultValue") not in (None, "")]
-        default = defaults[0] if defaults else None
-
-        if kind == "select":
-            options = []
-            for info in infos:
-                for opt in info.get("options") or []:
-                    value = opt.get("value") if isinstance(opt, dict) else opt
-                    if value not in options:
-                        options.append(value)
-            if not options:
-                continue
-            if default not in options:
-                default = options[0]
-            widgets[name] = (options, {"default": default,
-                                       "tooltip": "Options are the union across models; "
-                                                  "unsupported values fall back to the "
-                                                  "model's default."})
-        elif kind == "boolean":
-            widgets[name] = ("BOOLEAN", {"default": bool(default)})
-        elif kind == "number":
-            nums = [d for d in defaults if isinstance(d, (int, float))]
-            is_int = all(float(n).is_integer() for n in nums) if nums else True
-            start = nums[0] if nums else 0
-            if is_int:
-                widgets[name] = ("INT", {"default": int(start), "min": 0, "max": 2**31 - 1})
-            else:
-                widgets[name] = ("FLOAT", {"default": float(start), "min": 0.0,
-                                           "max": 1e9, "step": 0.01})
-        else:  # string and friends
-            widgets[name] = ("STRING", {"default": default if isinstance(default, str) else ""})
-    return widgets
-
-
-def _domain_file_sockets(model_type):
-    has_image = has_audio = has_video = False
-    for m in _models_of_type(model_type):
-        for inp in m.get("inputs") or []:
-            if inp.get("type") != "file":
-                continue
-            kind = _file_kind(inp)
-            has_image = has_image or kind == "image"
-            has_audio = has_audio or kind == "audio"
-            has_video = has_video or kind == "video"
-    return has_image, has_audio, has_video
-
-
-def _make_domain_node(model_type):
-    class_name = "Pixio" + "".join(
-        part.capitalize() for part in model_type.split("-") if part)
-
-    class PixioDomainNode(PixioGeneration):
-        MODEL_TYPE = model_type
-        FUNCTION = "generate_domain"
-        DESCRIPTION = (f"Run any Pixio {model_type} model. Common parameters are native "
-                       f"widgets; model-specific extras go in model_params JSON.")
-
-        @classmethod
-        def INPUT_TYPES(cls):
-            models = _models_of_type(cls.MODEL_TYPE)
-            ids = [m["id"] for m in models] or ["(catalog unavailable)"]
-            default_id = min(models, key=lambda m: m.get("credits") or 0)["id"] \
-                if models else ids[0]
-            has_image, has_audio, has_video = _domain_file_sockets(cls.MODEL_TYPE)
-
-            required = {
-                "api_key": ("STRING", {
-                    "default": os.environ.get("PIXIO_API_KEY", ""),
-                    "tooltip": "Pixio API key (pxio_live_...). Leave empty to use the "
-                               "PIXIO_API_KEY env var or pixio_config.json."}),
-                "model": (ids, {"default": default_id}),
-                "prompt": ("STRING", {"default": "", "multiline": True}),
-            }
-            required.update(_domain_widget_spec(cls.MODEL_TYPE))
-            if has_video:
-                required["video_url"] = ("STRING", {
-                    "default": "",
-                    "tooltip": "URL or local path of the input video, mapped to the "
-                               "model's video parameter."})
-            required["model_params"] = ("STRING", {
-                "default": "{}", "multiline": True,
-                "tooltip": "JSON overrides for model-specific parameters."})
-            required["seed"] = ("INT", {"default": 0, "min": 0,
-                                        "max": 0xFFFFFFFFFFFFFFFF,
-                                        "control_after_generate": True})
-            required["timeout_minutes"] = ("INT", {"default": 15, "min": 1, "max": 120})
-
-            optional = {"pixio_key": ("STRING", {"forceInput": True})}
-            if has_image:
-                optional["image_1"] = ("IMAGE", {"tooltip": "Mapped to the model's first "
-                                                            "image input."})
-                optional["image_2"] = ("IMAGE", {"tooltip": "Mapped to the model's second "
-                                                            "image input."})
-            if has_audio:
-                optional["audio"] = ("AUDIO", {"tooltip": "Mapped to the model's audio "
-                                                          "input."})
-            return {"required": required, "optional": optional}
-
-        def generate_domain(self, api_key, model, prompt, model_params, seed,
-                            timeout_minutes, video_url="", image_1=None, image_2=None,
-                            audio=None, pixio_key=None, **widget_values):
-            client = PixioClient((pixio_key or "").strip() or api_key)
-            try:
-                model_def = client.get_model(model)
-            except PixioError as e:
-                print(f"[Pixio] warning: could not fetch schema for '{model}': {e}")
-                model_def = {"id": model, "inputs": [], "providerId": "pixio",
-                             "type": self.MODEL_TYPE}
-            schema = {i.get("name"): i for i in model_def.get("inputs") or []}
-
-            params = {}
-            dropped = []
-            for name, value in widget_values.items():
-                inp = schema.get(name)
-                if inp is None:
-                    dropped.append(name)
-                    continue
-                if inp.get("type") == "select":
-                    allowed = [o.get("value") if isinstance(o, dict) else o
-                               for o in inp.get("options") or []]
-                    if allowed and value not in allowed:
-                        fallback = inp.get("defaultValue")
-                        print(f"[Pixio] '{name}' = {value!r} not supported by {model}; "
-                              f"using {fallback!r} (allowed: {', '.join(map(str, allowed))})")
-                        value = fallback
-                params[name] = value
-            if dropped:
-                print(f"[Pixio] {model} does not take: {', '.join(dropped)} (ignored)")
-
-            if video_url.strip():
-                for inp in model_def.get("inputs") or []:
-                    if inp.get("type") == "file" and _file_kind(inp) == "video" \
-                            and not params.get(inp.get("name")):
-                        params[inp["name"]] = video_url.strip()
-                        break
-
-            try:
-                raw = json.loads(model_params) if model_params.strip() else {}
-                if not isinstance(raw, dict):
-                    raise ValueError("must be a JSON object")
-            except ValueError as e:
-                raise PixioError(f"model_params is not valid JSON: {e}")
-            params.update(raw)  # explicit JSON wins over widgets
-
-            params = _prepare_params(client, model_def, prompt, params,
-                                     [image_1, image_2], audio, seed)
-            return _execute_generation(client, model_def, model, params, timeout_minutes)
-
-    PixioDomainNode.__name__ = class_name
-    PixioDomainNode.__qualname__ = class_name
-    return PixioDomainNode
-
-
 NODE_CLASS_MAPPINGS = {
     "PixioGeneration": PixioGeneration,
     "PixioApiKey": PixioApiKey,
@@ -807,10 +648,3 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PixioCredits": "Pixio Credits",
     "PixioUploadMedia": "Pixio Upload Media",
 }
-
-for _model_type in sorted({m.get("type") for m in get_catalog() if m.get("type")}):
-    _cls = _make_domain_node(_model_type)
-    NODE_CLASS_MAPPINGS[_cls.__name__] = _cls
-    NODE_DISPLAY_NAME_MAPPINGS[_cls.__name__] = \
-        "Pixio " + _model_type.replace("-", " ").title() \
-        .replace(" To ", " → ").replace("Svg", "SVG")

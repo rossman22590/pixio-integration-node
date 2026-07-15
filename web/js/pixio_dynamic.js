@@ -28,6 +28,30 @@ const NON_GENERATION_NODES = new Set([
 // widgets or injected by the Python node.
 const ALWAYS_SKIP = new Set(["prompt", "seed"]);
 
+// Socket pool declared by the Python node — the extension shows only the
+// sockets the selected model uses, relabeled to its real param names.
+const SOCKET_POOL = {
+    image: { names: ["image_1", "image_2", "image_3", "image_4"], type: "IMAGE" },
+    video: { names: ["video_1", "video_2"], type: "VIDEO" },
+    audio: { names: ["audio"], type: "AUDIO" },
+};
+const MANAGED_SOCKETS = new Map();
+for (const pool of Object.values(SOCKET_POOL)) {
+    for (const name of pool.names) MANAGED_SOCKETS.set(name, pool.type);
+}
+
+// Mirror of the Python _file_kind heuristic so socket order and runtime
+// mapping always agree.
+const AUDIO_HINTS = ["audio", "voice", "music", "sound", "speech", "song", "vocal"];
+const VIDEO_HINTS = ["video", "clip", "movie", "footage"];
+
+function fileKind(input) {
+    const text = `${input.name || ""} ${input.label || ""}`.toLowerCase();
+    if (AUDIO_HINTS.some((h) => text.includes(h))) return "audio";
+    if (VIDEO_HINTS.some((h) => text.includes(h))) return "video";
+    return "image";
+}
+
 function isPixioGenerationNode(name) {
     return typeof name === "string" && name.startsWith("Pixio") &&
         !NON_GENERATION_NODES.has(name);
@@ -158,6 +182,36 @@ function addDynamicWidget(node, input, preset) {
 // per-model rebuild
 // ---------------------------------------------------------------------------
 
+// Show exactly the media sockets the model's file params need, in schema
+// order, labeled with the param's real name. Sockets not in the pool
+// (pixio_key, converted widgets) are never touched.
+function reconcileInputs(node, def) {
+    const wanted = new Map(); // socket name -> display label
+    const used = { image: 0, video: 0, audio: 0 };
+    for (const input of def.inputs || []) {
+        if (input.type !== "file") continue;
+        const kind = fileKind(input);
+        const pool = SOCKET_POOL[kind];
+        if (used[kind] >= pool.names.length) continue; // overflow → model_params URL
+        wanted.set(pool.names[used[kind]++], input.label || input.name);
+    }
+
+    for (let i = (node.inputs?.length || 0) - 1; i >= 0; i--) {
+        const name = node.inputs[i]?.name;
+        if (MANAGED_SOCKETS.has(name) && !wanted.has(name)) {
+            node.removeInput(i);
+        }
+    }
+    for (const [name, label] of wanted) {
+        let slot = node.findInputSlot(name);
+        if (slot === -1) {
+            node.addInput(name, MANAGED_SOCKETS.get(name));
+            slot = node.findInputSlot(name);
+        }
+        if (slot !== -1) node.inputs[slot].label = label;
+    }
+}
+
 function applyModel(node) {
     const modelId = getWidget(node, "model")?.value;
     const def = catalog.find((m) => m.id === modelId);
@@ -167,14 +221,18 @@ function applyModel(node) {
 
     const presets = readParams(node);
     clearDynamicWidgets(node);
+    reconcileInputs(node, def);
 
     const credits = def.credits != null ? ` · ${def.credits} cr` : "";
     node.title = `Pixio — ${def.name || modelId}${credits}`;
 
-    // Anything the node already has a native widget for stays native.
+    // Anything the node already has a native widget for stays native; file
+    // params are handled by the media sockets (a URL in model_params still
+    // overrides a connected socket).
     const nativeNames = new Set((node.widgets || []).map((w) => w.name));
     for (const input of def.inputs || []) {
         if (ALWAYS_SKIP.has(input.name) || nativeNames.has(input.name)) continue;
+        if (input.type === "file") continue;
         addDynamicWidget(node, input, presets[input.name]);
     }
 
