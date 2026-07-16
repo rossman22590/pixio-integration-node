@@ -16,8 +16,8 @@
 //      happen when a workflow is loaded or an embedding host app sets the
 //      model programmatically (update_widget), not just on dropdown clicks.
 
-import { app } from "../../scripts/app.js";
-import { api } from "../../scripts/api.js";
+import { app } from "../../../scripts/app.js";
+import { api } from "../../../scripts/api.js";
 
 const UNIVERSAL_NODE = "PixioGeneration";
 // Pixio nodes without a model dropdown — no dynamic behavior needed.

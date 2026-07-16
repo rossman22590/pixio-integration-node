@@ -269,7 +269,9 @@ def _prepare_params(client, model_def, prompt, raw_params, images, videos, audio
         params["prompt"] = prompt
 
     if "seed" in schema and "seed" not in params and seed > 0:
-        params["seed"] = seed
+        # Providers commonly validate seed as int32 — fold the 64-bit widget
+        # value into that range so randomized seeds never fail validation.
+        params["seed"] = seed % 2147483648
 
     # Map connected media / local paths onto the model's file inputs.
     image_queue = [img for img in images if img is not None]
@@ -311,13 +313,31 @@ def _prepare_params(client, model_def, prompt, raw_params, images, videos, audio
             params.pop(name, None)
 
     cleaned = {}
+    dropped = []
     for name, value in params.items():
         inp = schema.get(name)
-        if inp is not None:
+        if inp is None:
+            # When the model's schema is known, never send parameters it
+            # doesn't accept — stale model_params from a previously selected
+            # model would otherwise fail API validation.
+            if inputs:
+                dropped.append(name)
+                continue
+        else:
+            if inp.get("type") == "select":
+                allowed = [o.get("value") if isinstance(o, dict) else o
+                           for o in inp.get("options") or []]
+                if allowed and value not in allowed:
+                    fallback = inp.get("defaultValue")
+                    print(f"[Pixio] '{name}' = {value!r} not supported by this model; "
+                          f"using {fallback!r} (allowed: {', '.join(map(str, allowed))})")
+                    value = fallback
             value = _coerce(value, inp)
         if value is None or (isinstance(value, str) and value == ""):
             continue
         cleaned[name] = value
+    if dropped:
+        print(f"[Pixio] this model does not take: {', '.join(dropped)} (ignored)")
     return cleaned
 
 
