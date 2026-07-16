@@ -11,6 +11,7 @@ import io
 import json
 import os
 import threading
+import time
 from urllib.parse import urlparse
 
 import numpy as np
@@ -432,6 +433,31 @@ class PixioGeneration:
         return _execute_generation(client, model_def, model, params, timeout_minutes)
 
 
+def _download_output(client, content_id, url):
+    """Download an output, refreshing the signed URL from the API on failure.
+
+    Right after a generation succeeds, some providers' records briefly carry an
+    unsigned storage URL (403). Re-fetching the generation makes the API mint a
+    fresh presigned outputUrl, so retry through that before giving up.
+    """
+    try:
+        return client.download(url), url
+    except PixioError as first_err:
+        print(f"[Pixio] download failed, refreshing output URL: {first_err}")
+        for delay in (2.0, 5.0):
+            time.sleep(delay)
+            try:
+                fresh_urls = extract_output_urls(client.get_generation(content_id))
+            except PixioError:
+                continue
+            for fresh in fresh_urls:
+                try:
+                    return client.download(fresh), fresh
+                except PixioError:
+                    continue
+        raise first_err
+
+
 def _execute_generation(client, model_def, model, params, timeout_minutes):
     """Start a generation, poll to completion, download and convert the outputs."""
     shown = {k: (v[:80] + "…" if isinstance(v, str) and len(v) > 80 else v)
@@ -472,7 +498,7 @@ def _execute_generation(client, model_def, model, params, timeout_minutes):
     if media_type == "image":
         tensors = []
         for i, url in enumerate(urls):
-            data = client.download(url)
+            data, url = _download_output(client, content_id, url)
             try:
                 tensor = _bytes_to_image_tensor(data)
             except Exception:
@@ -488,7 +514,7 @@ def _execute_generation(client, model_def, model, params, timeout_minutes):
             base_shape = tensors[0].shape[1:]
             image_out = torch.cat([t for t in tensors if t.shape[1:] == base_shape], dim=0)
     elif media_type == "audio":
-        data = client.download(primary_url)
+        data, primary_url = _download_output(client, content_id, primary_url)
         ext = _ext_for(primary_url, "audio")
         fname = f"pixio_{content_id[:8]}{ext}"
         fpath = os.path.join(out_dir, fname)
@@ -500,7 +526,7 @@ def _execute_generation(client, model_def, model, params, timeout_minutes):
             audio_out = decoded
         ui["audio"] = [{"filename": fname, "subfolder": "pixio", "type": "output"}]
     elif media_type == "video":
-        data = client.download(primary_url)
+        data, primary_url = _download_output(client, content_id, primary_url)
         fname = f"pixio_{content_id[:8]}{_ext_for(primary_url, 'video')}"
         fpath = os.path.join(out_dir, fname)
         with open(fpath, "wb") as f:
@@ -514,7 +540,7 @@ def _execute_generation(client, model_def, model, params, timeout_minutes):
         ui["animated"] = (True,)
     else:
         # 3d models, svg, anything else — save the file and hand back the path/URL
-        data = client.download(primary_url)
+        data, primary_url = _download_output(client, content_id, primary_url)
         fpath = os.path.join(out_dir, f"pixio_{content_id[:8]}{_ext_for(primary_url, media_type)}")
         with open(fpath, "wb") as f:
             f.write(data)
